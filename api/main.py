@@ -62,12 +62,11 @@ def analyze(
             "allowed_range": f"{MIN_RISK_PERCENT}% to {MAX_RISK_PERCENT}%"
         }
 
-    if max_lot_size is not None:
-        if max_lot_size < 1 or max_lot_size > 100:
-            return {
-                "error": "Invalid max_lot_size",
-                "allowed_range": "1 to 100"
-            }
+    if max_lot_size is not None and not (1 <= max_lot_size <= 100):
+        return {
+            "error": "Invalid max_lot_size",
+            "allowed_range": "1 to 100"
+        }
 
     # ------------------
     # MARKET DATA
@@ -78,13 +77,13 @@ def analyze(
     trend = trend_engine.classify_trend(df)
     entry = float(df.close.iloc[-1])
 
-    # These MUST be exposed by your strategy
-    rsi_value = strategy.last_rsi
-    ema_slope = strategy.ema_slope
+    # Safe indicator access (VERY IMPORTANT)
+    rsi_value = getattr(strategy, "last_rsi", 50.0)
+    ema_slope = getattr(strategy, "ema_slope", 0.0)
 
     stop = take_profit = None
     sizing = None
-    valid = False
+    trade_allowed = False
 
     # ------------------
     # TRADE LOGIC
@@ -93,7 +92,7 @@ def analyze(
         stop = fixed_percentage_stop(entry, 0.01, signal)
         take_profit = fixed_rr_take_profit(entry, stop, 2, signal)
 
-        valid = validate_trade(
+        trade_allowed = validate_trade(
             signal=signal,
             trend=trend,
             entry=entry,
@@ -101,7 +100,7 @@ def analyze(
             take_profit=take_profit
         )
 
-        if valid:
+        if trade_allowed:
             sizing = PositionSizer.calculate_position(
                 symbol=symbol,
                 balance=ACCOUNT_BALANCE,
@@ -110,10 +109,7 @@ def analyze(
                 stop_loss=stop
             )
 
-            # ------------------
-            # LOT SIZE CAP
-            # ------------------
-            if max_lot_size is not None and sizing["lots"] > max_lot_size:
+            if max_lot_size and sizing["lots"] > max_lot_size:
                 sizing["lots"] = max_lot_size
                 sizing["units"] = max_lot_size * sizing["units_per_lot"]
 
@@ -130,11 +126,11 @@ def analyze(
     )
 
     # ------------------
-    # RE-CHECK LOGIC (ONLY IF NO TRADE)
+    # RE-CHECK ENGINE (🔥 FIXED)
     # ------------------
     recheck_advice = None
 
-    if not valid:
+    if not trade_allowed:
         state = RecheckDecisionEngine.determine_state(
             signal=signal,
             trend=trend,
@@ -148,7 +144,7 @@ def analyze(
             timeframe=interval
         )
 
-    if recheck_advice:
+        # WhatsApp reminder scheduling
         schedule_recheck(symbol, recheck_advice)
 
     # ------------------
@@ -164,7 +160,7 @@ def analyze(
         "take_profit": round(take_profit, 4) if take_profit else None,
         "volatility": volatility,
         "confidence_percent": confidence,
-        "trade_allowed": valid,
+        "trade_allowed": trade_allowed,
         "risk_percent": risk_percent,
         "max_lot_size": max_lot_size
     }
@@ -181,6 +177,7 @@ def analyze(
         response["recheck_advice"] = recheck_advice
 
     return response
+
 
 # ==============================
 # SCAN
