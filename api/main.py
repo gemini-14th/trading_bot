@@ -28,8 +28,11 @@ MIN_RISK_PERCENT = 0.1
 MAX_RISK_PERCENT = 10.0
 DEFAULT_RISK = 1.0
 
+MIN_LOT_SIZE = 0.001
+MAX_LOT_SIZE = 100.0
+
 # ==============================
-# ENGINES (Singletons)
+# ENGINES
 # ==============================
 data_router = MarketDataRouter()
 strategy = EMARsiStrategy()
@@ -56,17 +59,18 @@ def analyze(
     # ------------------
     # VALIDATION
     # ------------------
-    if risk_percent < MIN_RISK_PERCENT or risk_percent > MAX_RISK_PERCENT:
+    if not (MIN_RISK_PERCENT <= risk_percent <= MAX_RISK_PERCENT):
         return {
             "error": "Invalid risk_percent",
             "allowed_range": f"{MIN_RISK_PERCENT}% to {MAX_RISK_PERCENT}%"
         }
 
-    if max_lot_size is not None and not (1 <= max_lot_size <= 100):
-        return {
-            "error": "Invalid max_lot_size",
-            "allowed_range": "1 to 100"
-        }
+    if max_lot_size is not None:
+        if not (MIN_LOT_SIZE <= max_lot_size <= MAX_LOT_SIZE):
+            return {
+                "error": "Invalid max_lot_size",
+                "allowed_range": f"{MIN_LOT_SIZE} to {MAX_LOT_SIZE}"
+            }
 
     # ------------------
     # MARKET DATA
@@ -77,7 +81,6 @@ def analyze(
     trend = trend_engine.classify_trend(df)
     entry = float(df.close.iloc[-1])
 
-    # Safe indicator access (VERY IMPORTANT)
     rsi_value = getattr(strategy, "last_rsi", 50.0)
     ema_slope = getattr(strategy, "ema_slope", 0.0)
 
@@ -109,7 +112,17 @@ def analyze(
                 stop_loss=stop
             )
 
-            if max_lot_size and sizing["lots"] > max_lot_size:
+            # ------------------
+            # HARD SAFETY FLOOR
+            # ------------------
+            if sizing["lots"] < MIN_LOT_SIZE:
+                sizing["lots"] = MIN_LOT_SIZE
+                sizing["units"] = MIN_LOT_SIZE * sizing["units_per_lot"]
+
+            # ------------------
+            # USER MAX LOT CAP
+            # ------------------
+            if max_lot_size is not None and sizing["lots"] > max_lot_size:
                 sizing["lots"] = max_lot_size
                 sizing["units"] = max_lot_size * sizing["units_per_lot"]
 
@@ -126,7 +139,7 @@ def analyze(
     )
 
     # ------------------
-    # RE-CHECK ENGINE (🔥 FIXED)
+    # RE-CHECK ENGINE
     # ------------------
     recheck_advice = None
 
@@ -144,7 +157,6 @@ def analyze(
             timeframe=interval
         )
 
-        # WhatsApp reminder scheduling
         schedule_recheck(symbol, recheck_advice)
 
     # ------------------
@@ -162,7 +174,11 @@ def analyze(
         "confidence_percent": confidence,
         "trade_allowed": trade_allowed,
         "risk_percent": risk_percent,
-        "max_lot_size": max_lot_size
+        "lot_constraints": {
+            "min_lot": MIN_LOT_SIZE,
+            "max_lot": MAX_LOT_SIZE,
+            "user_cap": max_lot_size
+        }
     }
 
     if sizing:
@@ -177,57 +193,3 @@ def analyze(
         response["recheck_advice"] = recheck_advice
 
     return response
-
-
-# ==============================
-# SCAN
-# ==============================
-@app.get("/scan")
-def scan(
-    symbols: str = Query(..., description="Comma-separated symbols"),
-    interval: str = "1h"
-):
-    symbol_list = [s.strip().upper() for s in symbols.split(",")]
-    results = []
-
-    for symbol in symbol_list:
-        try:
-            df = data_router.fetch_ohlcv(symbol, interval)
-            signal = strategy.generate_signal(df)
-            trend = trend_engine.classify_trend(df)
-
-            confidence = calculate_confidence(
-                structure_score=0.7,
-                indicator_score=0.8,
-                volume_score=0.6,
-                volatility_score=0.7
-            )
-
-            results.append({
-                "symbol": symbol,
-                "signal": signal,
-                "trend": trend,
-                "confidence": confidence
-            })
-
-        except Exception as e:
-            results.append({
-                "symbol": symbol,
-                "error": str(e)
-            })
-
-    results.sort(key=lambda x: x.get("confidence", 0), reverse=True)
-    return results
-
-# ==============================
-# EXECUTION
-# ==============================
-@app.post("/execute/paper")
-def execute_paper_trade(analysis: dict):
-    order = OrderBuilder.build_from_analysis(analysis)
-    return paper_broker.execute(order)
-
-@app.post("/execute/mt5")
-def generate_mt5_order(analysis: dict):
-    order = OrderBuilder.build_from_analysis(analysis)
-    return MT5Bridge.generate(order)
