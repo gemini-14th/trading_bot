@@ -22,8 +22,6 @@ app = FastAPI(title="Trading Analysis Chatbot")
 # ==============================
 # CONFIG
 # ==============================
-ACCOUNT_BALANCE = 100_000
-
 MIN_RISK_PERCENT = 0.1
 MAX_RISK_PERCENT = 10.0
 DEFAULT_RISK = 1.0
@@ -53,8 +51,9 @@ def health():
 def analyze(
     symbol: str,
     interval: str = "1h",
+    account_balance: float = Query(..., gt=0),
     risk_percent: float = DEFAULT_RISK,
-    max_lot_size: float | None = None
+    lot_size: float | None = None
 ):
     # ------------------
     # VALIDATION
@@ -65,12 +64,11 @@ def analyze(
             "allowed_range": f"{MIN_RISK_PERCENT}% to {MAX_RISK_PERCENT}%"
         }
 
-    if max_lot_size is not None:
-        if not (MIN_LOT_SIZE <= max_lot_size <= MAX_LOT_SIZE):
-            return {
-                "error": "Invalid max_lot_size",
-                "allowed_range": f"{MIN_LOT_SIZE} to {MAX_LOT_SIZE}"
-            }
+    if lot_size is not None and not (MIN_LOT_SIZE <= lot_size <= MAX_LOT_SIZE):
+        return {
+            "error": "Invalid lot_size",
+            "allowed_range": f"{MIN_LOT_SIZE} to {MAX_LOT_SIZE}"
+        }
 
     # ------------------
     # MARKET DATA
@@ -87,6 +85,7 @@ def analyze(
     stop = take_profit = None
     sizing = None
     trade_allowed = False
+    lot_mode = "auto"
 
     # ------------------
     # TRADE LOGIC
@@ -104,27 +103,37 @@ def analyze(
         )
 
         if trade_allowed:
-            sizing = PositionSizer.calculate_position(
-                symbol=symbol,
-                balance=ACCOUNT_BALANCE,
-                risk_percent=risk_percent,
-                entry_price=entry,
-                stop_loss=stop
-            )
+            if lot_size is not None:
+                # ------------------
+                # MANUAL LOT MODE
+                # ------------------
+                sizing = PositionSizer.calculate_from_lot(
+                    symbol=symbol,
+                    balance=account_balance,
+                    lot_size=lot_size,
+                    entry_price=entry,
+                    stop_loss=stop
+                )
+                lot_mode = "manual"
 
-            # ------------------
-            # HARD SAFETY FLOOR
-            # ------------------
-            if sizing["lots"] < MIN_LOT_SIZE:
-                sizing["lots"] = MIN_LOT_SIZE
-                sizing["units"] = MIN_LOT_SIZE * sizing["units_per_lot"]
+            else:
+                # ------------------
+                # AUTO SAFE MODE
+                # ------------------
+                sizing = PositionSizer.calculate_position(
+                    symbol=symbol,
+                    balance=account_balance,
+                    risk_percent=risk_percent,
+                    entry_price=entry,
+                    stop_loss=stop
+                )
+                lot_mode = "auto"
 
-            # ------------------
-            # USER MAX LOT CAP
-            # ------------------
-            if max_lot_size is not None and sizing["lots"] > max_lot_size:
-                sizing["lots"] = max_lot_size
-                sizing["units"] = max_lot_size * sizing["units_per_lot"]
+                if sizing["lots"] < MIN_LOT_SIZE:
+                    return {
+                        "error": "Account balance too small for safe trading",
+                        "suggestion": "Reduce risk or use higher timeframe"
+                    }
 
     # ------------------
     # ANALYTICS
@@ -165,6 +174,7 @@ def analyze(
     response = {
         "symbol": symbol,
         "interval": interval,
+        "account_balance": account_balance,
         "signal": signal,
         "trend": trend,
         "entry_price": round(entry, 4),
@@ -174,20 +184,24 @@ def analyze(
         "confidence_percent": confidence,
         "trade_allowed": trade_allowed,
         "risk_percent": risk_percent,
+        "lot_mode": lot_mode,
         "lot_constraints": {
             "min_lot": MIN_LOT_SIZE,
-            "max_lot": MAX_LOT_SIZE,
-            "user_cap": max_lot_size
+            "max_lot": MAX_LOT_SIZE
         }
     }
 
     if sizing:
         response.update({
+            "recommended_lot_size": round(sizing["lots"], 4),
             "position_size": round(sizing["units"], 2),
-            "lot_size": round(sizing["lots"], 3),
             "risk_amount": round(sizing["risk_amount"], 2),
-            "pip_distance": round(sizing["pip_distance"], 4)
+            "actual_risk_percent": round(sizing["actual_risk_percent"], 2),
+            "pip_distance": round(sizing["pip_distance"], 2)
         })
+
+        if lot_mode == "manual" and sizing["actual_risk_percent"] > risk_percent * 2:
+            response["warning"] = "Manual lot size exceeds safe risk threshold"
 
     if recheck_advice:
         response["recheck_advice"] = recheck_advice
