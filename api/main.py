@@ -27,6 +27,7 @@ app = FastAPI(title="Trading Analysis Chatbot")
 
 # ==============================
 # MIDDLEWARE
+# ==============================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
