@@ -20,8 +20,20 @@ from analytics.signal_ranker import SignalRanker
 from analytics.signal_dispatcher import SignalDispatcher
 from api.user import router as users_router
 from analytics.auto_signal_scanner import AutoSignalScanner
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Trading Analysis Chatbot")
+
+
+# ==============================
+# MIDDLEWARE
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(users_router)
 
