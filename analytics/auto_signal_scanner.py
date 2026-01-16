@@ -2,7 +2,7 @@
 
 from analytics.signal_scoring import SignalScoringEngine
 from analytics.signal_dispatcher import SignalDispatcher
-from api.main import analyze  # internal call (SAFE)
+from services.analyse_service import analyze_market
 
 
 class AutoSignalScanner:
@@ -24,11 +24,11 @@ class AutoSignalScanner:
         account_balance: float,
         risk_percent: float
     ):
-        from api.main import analyze  # import inside the function
+
 
         for symbol in AutoSignalScanner.SYMBOLS:
             try:
-                result = analyze(
+                result = analyze_market(
                     symbol=symbol,
                     interval=interval,
                     account_balance=account_balance,
