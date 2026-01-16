@@ -24,7 +24,7 @@ Confidence: {signal.get('confidence_percent')}%
 Lot Size: {signal.get('lot_size')}
 """
 
-        notifier.send_message(
+        notifier.send_whatsapp_message(
             to_number=os.getenv("WHATSAPP_TO =+254705798519"),
             message=message
         )

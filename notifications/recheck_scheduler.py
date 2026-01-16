@@ -23,4 +23,4 @@ def schedule_recheck(symbol: str, recheck_advice: dict):
     # ⚠️ Replace with user's WhatsApp later (Phase 3.2)
     demo_number = os.getenv("ADMIN_WHATSAPP_NUMBER")
     if demo_number:
-        notifier.send_message(demo_number, message)
+        notifier.send_whatsapp_message(demo_number, message)

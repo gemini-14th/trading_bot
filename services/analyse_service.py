@@ -212,6 +212,9 @@ def analyze_market(
     # ------------------
     # SIGNAL DISPATCH
     # ------------------
+
+    valid =False
+    highlighted =False
     if trade_allowed and sizing:
         try:
             signal_payload = {
@@ -228,10 +231,14 @@ def analyze_market(
             }
 
             valid, _ = SignalValidator.validate(signal_payload)
+            highlighted = SignalRanker.is_high_profit(signal_payload)
             if valid:
-                highlighted = SignalRanker.is_high_profit(signal_payload)
+                # print(highlighted)
                 SignalDispatcher.send(signal_payload, highlighted)
+            else:
+                pass
         except Exception as e:
+            print(e)
             return {
                 "error": "Failed to dispatch signal",
                 "suggestion": "Check signal validation or dispatch logic"
@@ -254,5 +261,7 @@ def analyze_market(
         "risk_percent": risk_percent,
         "lot_mode": lot_mode,
         "sizing": sizing,
-        "recheck_advice": recheck_advice
+        "recheck_advice": recheck_advice,
+        "valid_signal": valid,
+        "highly_profitable": highlighted,
     }
