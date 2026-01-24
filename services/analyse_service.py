@@ -10,6 +10,7 @@ from data.validators import validate_trade
 
 from risk.position_sizer import PositionSizer
 
+
 # ==============================
 # ENGINES (singletons)
 # ==============================
@@ -29,8 +30,11 @@ def analyze_market(
     max_lot: float
 ) -> dict:
     """
-    ATR-based SL/TP + risk-based sizing
-    No call to missing SignalDispatcher.send()
+    ANALYSIS-ONLY ENGINE
+    - ATR-based SL/TP
+    - Risk-based position sizing
+    - NO signal sending
+    - NO caching
     """
 
     # ------------------
@@ -41,6 +45,17 @@ def analyze_market(
     except Exception:
         return {"error": f"Failed to fetch market data for {symbol} ({interval})"}
 
+    if df is None or len(df) < 20:
+        return {
+            "market_open": False,
+            "message": "Insufficient market data",
+            "symbol": symbol,
+            "interval": interval
+        }
+
+    # ------------------
+    # STRATEGY & TREND
+    # ------------------
     try:
         signal = strategy.generate_signal(df)
     except Exception:
@@ -65,6 +80,7 @@ def analyze_market(
     lot_mode = "auto"
     rr_ratio = None
     atr = None
+
     # ------------------
     # TRADE LOGIC
     # ------------------
@@ -88,7 +104,9 @@ def analyze_market(
             stop = entry + (atr * SL_ATR_MULTIPLIER)
             take_profit = entry - (atr * TP_ATR_MULTIPLIER)
 
-        # Validate trade
+        # ------------------
+        # VALIDATE TRADE STRUCTURE
+        # ------------------
         try:
             trade_allowed = validate_trade(
                 signal=signal,
@@ -100,7 +118,9 @@ def analyze_market(
         except Exception:
             trade_allowed = False
 
-        # Position sizing
+        # ------------------
+        # POSITION SIZING
+        # ------------------
         if trade_allowed:
             if lot_size is not None:
                 try:
@@ -172,7 +192,7 @@ def analyze_market(
             pass
 
     # ------------------
-    # SIGNAL VALIDATION
+    # SIGNAL QUALITY CHECK
     # ------------------
     valid = False
     highlighted = False
@@ -197,7 +217,7 @@ def analyze_market(
         highlighted = SignalRanker.is_high_profit(signal_payload)
 
     # ------------------
-    # RETURN RESULT
+    # RETURN PURE ANALYSIS
     # ------------------
     return {
         "symbol": symbol,
@@ -218,5 +238,5 @@ def analyze_market(
         "recheck_advice": recheck_advice,
         "valid_signal": valid,
         "highly_profitable": highlighted,
-        "signal_payload": signal_payload  # you can use this for dispatch later
+        "analysis_only": True
     }
