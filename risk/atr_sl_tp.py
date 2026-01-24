@@ -1,15 +1,5 @@
-def calculate_sl_tp(entry, atr_pips, direction):
-    SL_MULT = 2.0
-    TP_MULT = 3.0
+# Removed: moved to 'deprecated/risk/atr_sl_tp.py' on 2026-01-24
+# Backup location: deprecated/risk/atr_sl_tp.py
+# If your code imports this module, update references or restore from the backup.
 
-    sl_pips = atr_pips * SL_MULT
-    tp_pips = atr_pips * TP_MULT
-
-    if direction == "BUY":
-        sl = entry - sl_pips
-        tp = entry + tp_pips
-    else:
-        sl = entry + sl_pips
-        tp = entry - tp_pips
-
-    return sl, tp, sl_pips, tp_pips
+raise ImportError("risk.atr_sl_tp has been removed and backed up at deprecated/risk/atr_sl_tp.py")

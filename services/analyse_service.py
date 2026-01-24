@@ -65,7 +65,6 @@ def analyze_market(
     lot_mode = "auto"
     rr_ratio = None
     atr = None
-
     # ------------------
     # TRADE LOGIC
     # ------------------

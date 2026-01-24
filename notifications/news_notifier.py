@@ -1,24 +1,5 @@
-import os
+# Removed: moved to 'deprecated/notifications/news_notifier.py' on 2026-01-24
+# Backup location: deprecated/notifications/news_notifier.py
+# If your code imports this module, update references or restore from the backup.
 
-WHATSAPP_ENABLED = os.getenv("WHATSAPP_ENABLED", "false").lower() == "true"
-
-def send_whatsapp_alert(message: str):
-    if not WHATSAPP_ENABLED:
-        return
-
-    try:
-        from twilio.rest import Client
-
-        client = Client(
-            os.getenv("TWILIO_SID"),
-            os.getenv("TWILIO_TOKEN")
-        )
-
-        client.messages.create(
-            from_="whatsapp:" + os.getenv("TWILIO_FROM"),
-            to="whatsapp:" + os.getenv("TWILIO_TO"),
-            body=message
-        )
-
-    except Exception as e:
-        print("WhatsApp alert failed:", e)
+raise ImportError("notifications.news_notifier has been removed and backed up at deprecated/notifications/news_notifier.py")
