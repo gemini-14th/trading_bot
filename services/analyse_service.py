@@ -1,20 +1,14 @@
 from data.market_data_router import MarketDataRouter
 from strategy.ema_rsi_strategy import EMARsiStrategy
 from analytics.trend_engine import TrendEngine
-from analytics.volatility import calculate_volatility
+from analytics.volatility import calculate_volatility, calculate_atr
 from analytics.confidence_score import calculate_confidence
 from analytics.recheck_engine import RecheckDecisionEngine
 from analytics.signal_validator import SignalValidator
 from analytics.signal_ranker import SignalRanker
-from analytics.signal_dispatcher import SignalDispatcher
 from data.validators import validate_trade
 
-from risk.stop_loss import fixed_percentage_stop
-from risk.take_profit import fixed_rr_take_profit
 from risk.position_sizer import PositionSizer
-
-from notifications.recheck_scheduler import schedule_recheck
-
 
 # ==============================
 # ENGINES (singletons)
@@ -35,8 +29,8 @@ def analyze_market(
     max_lot: float
 ) -> dict:
     """
-    CORE ANALYSIS SERVICE
-    Manual error handling, consistent JSON response for errors
+    ATR-based SL/TP + risk-based sizing
+    No call to missing SignalDispatcher.send()
     """
 
     # ------------------
@@ -44,35 +38,23 @@ def analyze_market(
     # ------------------
     try:
         df = data_router.fetch_ohlcv(symbol, interval)
-    except Exception as e:
-        return {
-            "error": f"Failed to fetch market data for {symbol} ({interval})",
-            "suggestion": "Check symbol, interval, or data source connectivity"
-        }
+    except Exception:
+        return {"error": f"Failed to fetch market data for {symbol} ({interval})"}
 
     try:
         signal = strategy.generate_signal(df)
-    except Exception as e:
-        return {
-            "error": "Failed to generate trading signal",
-            "suggestion": "Check strategy configuration"
-        }
+    except Exception:
+        return {"error": "Failed to generate trading signal"}
 
     try:
         trend = trend_engine.classify_trend(df)
-    except Exception as e:
-        return {
-            "error": "Failed to classify market trend",
-            "suggestion": "Check trend engine logic"
-        }
+    except Exception:
+        return {"error": "Failed to classify market trend"}
 
     try:
         entry = float(df.close.iloc[-1])
-    except Exception as e:
-        return {
-            "error": "Failed to determine entry price",
-            "suggestion": "Check OHLCV data integrity"
-        }
+    except Exception:
+        return {"error": "Failed to determine entry price"}
 
     rsi_value = getattr(strategy, "last_rsi", 50.0)
     ema_slope = getattr(strategy, "ema_slope", 0.0)
@@ -82,27 +64,32 @@ def analyze_market(
     trade_allowed = False
     lot_mode = "auto"
     rr_ratio = None
+    atr = None
 
     # ------------------
     # TRADE LOGIC
     # ------------------
     if signal in ("BUY", "SELL"):
-        try:
-            stop = fixed_percentage_stop(entry, 0.01, signal)
-        except Exception as e:
-            return {
-                "error": "Failed to calculate stop loss",
-                "suggestion": "Check stop loss calculation logic"
-            }
 
+        # ==============================
+        # ATR-BASED SL / TP
+        # ==============================
         try:
-            take_profit = fixed_rr_take_profit(entry, stop, 2, signal)
-        except Exception as e:
-            return {
-                "error": "Failed to calculate take profit",
-                "suggestion": "Check take profit calculation logic"
-            }
+            atr = calculate_atr(df, period=14)
+        except Exception:
+            return {"error": "Failed to calculate ATR"}
 
+        SL_ATR_MULTIPLIER = 1.5
+        TP_ATR_MULTIPLIER = 3.0
+
+        if signal == "BUY":
+            stop = entry - (atr * SL_ATR_MULTIPLIER)
+            take_profit = entry + (atr * TP_ATR_MULTIPLIER)
+        else:
+            stop = entry + (atr * SL_ATR_MULTIPLIER)
+            take_profit = entry - (atr * TP_ATR_MULTIPLIER)
+
+        # Validate trade
         try:
             trade_allowed = validate_trade(
                 signal=signal,
@@ -111,12 +98,10 @@ def analyze_market(
                 stop_loss=stop,
                 take_profit=take_profit
             )
-        except Exception as e:
-            return {
-                "error": "Trade validation failed",
-                "suggestion": "Check trade validation logic"
-            }
+        except Exception:
+            trade_allowed = False
 
+        # Position sizing
         if trade_allowed:
             if lot_size is not None:
                 try:
@@ -128,11 +113,8 @@ def analyze_market(
                         stop_loss=stop
                     )
                     lot_mode = "manual"
-                except Exception as e:
-                    return {
-                        "error": "Failed to calculate position from lot size",
-                        "suggestion": "Check lot size or position sizing logic"
-                    }
+                except Exception:
+                    sizing = None
             else:
                 try:
                     sizing = PositionSizer.calculate_position(
@@ -142,33 +124,23 @@ def analyze_market(
                         entry_price=entry,
                         stop_loss=stop
                     )
-                    if sizing["lots"] < min_lot:
-                        return {
-                            "error": "Account balance too small for safe trading",
-                            "suggestion": "Reduce risk percent or use higher timeframe"
-                        }
-                except Exception as e:
-                    return {
-                        "error": "Failed to calculate position sizing",
-                        "suggestion": "Check account balance, risk percent, or lot limits"
-                    }
+
+                    if sizing and sizing["lots"] < min_lot:
+                        trade_allowed = False
+
+                except Exception:
+                    sizing = None
 
             if sizing:
-                try:
-                    rr_ratio = abs(take_profit - entry) / abs(entry - stop)
-                except Exception as e:
-                    rr_ratio = None  # optional fallback
+                rr_ratio = abs(take_profit - entry) / abs(entry - stop)
 
     # ------------------
     # ANALYTICS
     # ------------------
     try:
         volatility = calculate_volatility(df)
-    except Exception as e:
-        return {
-            "error": "Failed to calculate market volatility",
-            "suggestion": "Check OHLCV data or volatility calculation"
-        }
+    except Exception:
+        volatility = None
 
     try:
         confidence = calculate_confidence(
@@ -177,11 +149,8 @@ def analyze_market(
             volume_score=0.6,
             volatility_score=0.7
         )
-    except Exception as e:
-        return {
-            "error": "Failed to calculate confidence score",
-            "suggestion": "Check confidence calculation logic"
-        }
+    except Exception:
+        confidence = None
 
     # ------------------
     # RECHECK ENGINE
@@ -196,53 +165,37 @@ def analyze_market(
                 volatility=volatility,
                 ema_slope=ema_slope
             )
-
             recheck_advice = RecheckDecisionEngine.build_recheck_response(
                 state=state,
                 timeframe=interval
             )
-
-            schedule_recheck(symbol, recheck_advice)
-        except Exception as e:
-            return {
-                "error": "Failed to generate recheck advice",
-                "suggestion": "Check RecheckDecisionEngine or scheduler logic"
-            }
+        except Exception:
+            pass
 
     # ------------------
-    # SIGNAL DISPATCH
+    # SIGNAL VALIDATION
     # ------------------
+    valid = False
+    highlighted = False
+    signal_payload = None
 
-    valid =False
-    highlighted =False
     if trade_allowed and sizing:
-        try:
-            signal_payload = {
-                "symbol": symbol,
-                "signal": signal,
-                "interval": interval,
-                "entry_price": entry,
-                "stop_loss": stop,
-                "take_profit": take_profit,
-                "confidence_percent": confidence,
-                "lot_size": sizing["lots"],
-                "rr_ratio": round(rr_ratio, 2) if rr_ratio else None,
-                "volatility": volatility
-            }
+        signal_payload = {
+            "symbol": symbol,
+            "signal": signal,
+            "interval": interval,
+            "entry_price": entry,
+            "stop_loss": stop,
+            "take_profit": take_profit,
+            "confidence_percent": confidence,
+            "lot_size": sizing["lots"],
+            "rr_ratio": round(rr_ratio, 2) if rr_ratio else None,
+            "volatility": volatility,
+            "atr": round(atr, 5) if atr else None
+        }
 
-            valid, _ = SignalValidator.validate(signal_payload)
-            highlighted = SignalRanker.is_high_profit(signal_payload)
-            if valid:
-                # print(highlighted)
-                SignalDispatcher.send(signal_payload, highlighted)
-            else:
-                pass
-        except Exception as e:
-            print(e)
-            return {
-                "error": "Failed to dispatch signal",
-                "suggestion": "Check signal validation or dispatch logic"
-            }
+        valid, _ = SignalValidator.validate(signal_payload)
+        highlighted = SignalRanker.is_high_profit(signal_payload)
 
     # ------------------
     # RETURN RESULT
@@ -255,13 +208,16 @@ def analyze_market(
         "entry_price": round(entry, 4),
         "stop_loss": round(stop, 4) if stop else None,
         "take_profit": round(take_profit, 4) if take_profit else None,
+        "atr": round(atr, 5) if atr else None,
         "volatility": volatility,
         "confidence_percent": confidence,
         "trade_allowed": trade_allowed,
         "risk_percent": risk_percent,
         "lot_mode": lot_mode,
         "sizing": sizing,
+        "rr_ratio": round(rr_ratio, 2) if rr_ratio else None,
         "recheck_advice": recheck_advice,
         "valid_signal": valid,
         "highly_profitable": highlighted,
+        "signal_payload": signal_payload  # you can use this for dispatch later
     }

@@ -18,8 +18,10 @@ from analytics.signal_ranker import SignalRanker
 from analytics.signal_dispatcher import SignalDispatcher
 from analytics.auto_signal_scanner import AutoSignalScanner
 
-from notifications.recheck_scheduler import schedule_recheck
 from api.user import router as users_router
+from dotenv import load_dotenv
+load_dotenv()
+
 
 app = FastAPI(title="Trading Analysis Chatbot")
 
